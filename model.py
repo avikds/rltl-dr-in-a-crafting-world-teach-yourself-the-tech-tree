@@ -522,3 +522,60 @@ def pass_at_k(counts):
 
     return sum(count > 0 for count in counts) / len(counts)
 
+# Step 9 - demo
+def demo(task, insights):
+    target, have = task
+
+    # Use one shared inventory for the complete demonstration.
+    inv = Counter(have)
+    actions = []
+
+    # Obtain the item associated with each insight first, in order.
+    for insight in insights:
+        item = insight.split("_", 1)[1]
+        actions.extend(plan(item, inv))
+
+    # Finally obtain the actual target from the resulting inventory.
+    actions.extend(plan(target, inv))
+    actions.append("END")
+
+    return actions
+
+
+def make_batch(rows):
+    # Find the longest token sequence.
+    max_len = max(len(tokens) for tokens, _ in rows)
+
+    batch_size = len(rows)
+    seq_len = max_len - 1
+
+    # X and Y are shifted by one position.
+    X = torch.full(
+        (batch_size, seq_len),
+        PAD,
+        dtype=torch.long,
+    )
+    Y = torch.full(
+        (batch_size, seq_len),
+        PAD,
+        dtype=torch.long,
+    )
+
+    # M is aligned with Y and uses zero for padded positions.
+    M = torch.zeros(
+        (batch_size, seq_len),
+        dtype=torch.float32,
+    )
+
+    for i, (tokens, mask) in enumerate(rows):
+        tokens = list(tokens)
+        mask = list(mask)
+
+        n = len(tokens) - 1
+
+        X[i, :n] = torch.tensor(tokens[:-1], dtype=torch.long)
+        Y[i, :n] = torch.tensor(tokens[1:], dtype=torch.long)
+        M[i, :n] = torch.tensor(mask[1:], dtype=torch.float32)
+
+    return X, Y, M
+
