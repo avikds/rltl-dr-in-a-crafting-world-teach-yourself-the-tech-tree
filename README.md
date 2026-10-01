@@ -21,6 +21,7 @@ python scaffold.py
 - [x] **9.** demo
 - [x] **10.** pretrain
 - [x] **11.** sequential_groups
+- [x] **12.** group_batch
 
 ---
 

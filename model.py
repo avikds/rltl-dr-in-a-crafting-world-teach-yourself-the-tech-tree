@@ -754,3 +754,32 @@ def sequential_groups(
 
     return groups, insights
 
+# Step 12 - group_batch
+def group_batch(groups):
+    batch = []
+
+    for group in groups:
+        rewards = [rollout["reward"] for rollout in group]
+
+        if not rewards:
+            continue
+
+        mean_reward = sum(rewards) / len(rewards)
+        has_signal = any(
+            reward != rewards[0]
+            for reward in rewards[1:]
+        )
+
+        for rollout in group:
+            if has_signal:
+                rollout["adv"] = rollout["reward"] - mean_reward
+            else:
+                rollout["adv"] = 0.0
+
+            # Keep every rollout from a signal-bearing group.
+            # For zero-signal groups, keep only conditioned rollouts.
+            if has_signal or rollout["conditioned"]:
+                batch.append(rollout)
+
+    return batch
+
