@@ -1032,3 +1032,210 @@ def train_rl(
 
     return history
 
+# Step 16 - insight_metrics
+def insight_metrics(groups):
+    n_groups = len(groups)
+
+    # Overall fraction of groups with at least one successful rollout.
+    solved_count = 0
+
+    conditioned_groups = 0
+    too_hard_count = 0
+    too_easy_count = 0
+
+    # Advantage is measured only where both conditioned and
+    # unconditioned rollouts exist.
+    advantage_values = []
+
+    successful_rollouts = 0
+    successful_conditioned = 0
+
+    for group in groups:
+        if any(rollout["reward"] > 0.0 for rollout in group):
+            solved_count += 1
+
+        conditioned = [
+            rollout
+            for rollout in group
+            if rollout["conditioned"]
+        ]
+        unconditioned = [
+            rollout
+            for rollout in group
+            if not rollout["conditioned"]
+        ]
+
+        if conditioned:
+            conditioned_groups += 1
+
+            conditioned_successes = sum(
+                rollout["reward"] > 0.0
+                for rollout in conditioned
+            )
+
+            conditioned_rate = (
+                conditioned_successes / len(conditioned)
+            )
+
+            if conditioned_successes == 0:
+                too_hard_count += 1
+
+            if conditioned_successes == len(conditioned):
+                too_easy_count += 1
+
+            if unconditioned:
+                unconditioned_successes = sum(
+                    rollout["reward"] > 0.0
+                    for rollout in unconditioned
+                )
+
+                unconditioned_rate = (
+                    unconditioned_successes / len(unconditioned)
+                )
+
+                advantage_values.append(
+                    conditioned_rate - unconditioned_rate
+                )
+
+        for rollout in group:
+            if rollout["reward"] > 0.0:
+                successful_rollouts += 1
+
+                if rollout["conditioned"]:
+                    successful_conditioned += 1
+
+    solved = (
+        solved_count / n_groups
+        if n_groups
+        else 0.0
+    )
+
+    too_hard = (
+        too_hard_count / conditioned_groups
+        if conditioned_groups
+        else 0.0
+    )
+
+    too_easy = (
+        too_easy_count / conditioned_groups
+        if conditioned_groups
+        else 0.0
+    )
+
+    advantage = (
+        sum(advantage_values) / len(advantage_values)
+        if advantage_values
+        else 0.0
+    )
+
+    cond_share = (
+        successful_conditioned / successful_rollouts
+        if successful_rollouts
+        else 0.0
+    )
+
+    return {
+        "solved": solved,
+        "too_hard": too_hard,
+        "too_easy": too_easy,
+        "advantage": advantage,
+        "cond_share": cond_share,
+    }
+
+
+def strip_insights(ctx):
+    stripped = []
+    i = 0
+
+    while i < len(ctx):
+        # Remove INS and the hint token immediately following it.
+        if ctx[i] == INS:
+            i += 2
+        else:
+            stripped.append(ctx[i])
+            i += 1
+
+    return stripped
+
+
+@torch.no_grad()
+def insight_reliance(model, rollouts):
+    rows_with_insights = []
+    rows_without_insights = []
+    action_lengths = []
+
+    # Keep only successful conditioned rollouts.
+    for rollout in rollouts:
+        if not rollout["conditioned"]:
+            continue
+
+        if rollout["reward"] <= 0.0:
+            continue
+
+        acts = rollout["acts"]
+
+        if not acts:
+            continue
+
+        ctx = rollout["ctx"]
+        stripped = strip_insights(ctx)
+
+        rows_with_insights.append(
+            (ctx + acts, [0] * (len(ctx) + len(acts)))
+        )
+        rows_without_insights.append(
+            (stripped + acts, [0] * (len(stripped) + len(acts)))
+        )
+        action_lengths.append(len(acts))
+
+    if not rows_with_insights:
+        return 0.0
+
+    # Compute action log-probabilities with the original contexts.
+    X_ctx, Y_ctx, _ = make_batch(rows_with_insights)
+    logits_ctx = model(X_ctx)
+    log_probs_ctx = torch.log_softmax(logits_ctx, dim=-1)
+    token_lp_ctx = torch.gather(
+        log_probs_ctx,
+        dim=-1,
+        index=Y_ctx.unsqueeze(-1),
+    ).squeeze(-1)
+
+    # Compute action log-probabilities after removing the insights.
+    X_strip, Y_strip, _ = make_batch(rows_without_insights)
+    logits_strip = model(X_strip)
+    log_probs_strip = torch.log_softmax(logits_strip, dim=-1)
+    token_lp_strip = torch.gather(
+        log_probs_strip,
+        dim=-1,
+        index=Y_strip.unsqueeze(-1),
+    ).squeeze(-1)
+
+    gaps = []
+
+    for i, (rollout, action_count) in enumerate(
+        zip(
+            [r for r in rollouts
+             if r["conditioned"] and r["reward"] > 0.0 and r["acts"]],
+            action_lengths,
+        )
+    ):
+        ctx_len = len(rollout["ctx"])
+        stripped_len = len(strip_insights(rollout["ctx"]))
+
+        # In the shifted target sequence, the first action prediction
+        # is at position len(context) - 1.
+        start_ctx = ctx_len - 1
+        end_ctx = start_ctx + action_count
+
+        start_strip = stripped_len - 1
+        end_strip = start_strip + action_count
+
+        sum_ctx = token_lp_ctx[i, start_ctx:end_ctx].sum()
+        sum_strip = token_lp_strip[i, start_strip:end_strip].sum()
+
+        gap = (sum_ctx - sum_strip) / action_count
+        gaps.append(float(gap.item()))
+
+    return sum(gaps) / len(gaps) if gaps else 0.0
+
