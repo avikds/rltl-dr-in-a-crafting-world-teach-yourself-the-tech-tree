@@ -28,6 +28,7 @@ python scaffold.py
 - [x] **16.** insight_metrics
 - [x] **17.** sftldr
 - [x] **18.** build_base
+- [x] **19.** run_variant
 
 ---
 

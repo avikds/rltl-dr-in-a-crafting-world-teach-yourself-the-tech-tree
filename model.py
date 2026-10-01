@@ -1344,3 +1344,59 @@ def build_base(
 
     return model, train, evals
 
+# Step 19 - run_variant
+def run_variant(
+    model,
+    base_state,
+    train,
+    evals,
+    steps,
+    cfg,
+    seed,
+    use_insights,
+    lam,
+    use_grpo=True,
+    collect_pairs=None,
+    k=4,
+    eval_seed=7,
+):
+    # Restore the common pretrained starting point.
+    model.load_state_dict(base_state)
+
+    # Train the requested RL variant.
+    hist = train_rl(
+        model,
+        train,
+        steps,
+        cfg,
+        seed=seed,
+        use_insights=use_insights,
+        lam=lam,
+        use_grpo=use_grpo,
+        collect_pairs=collect_pairs,
+    )
+
+    # Measure performance without providing insights at evaluation time.
+    train_counts = pass_counts(
+        model,
+        train,
+        k,
+        seed=eval_seed,
+        hidden=True,
+    )
+
+    eval_counts = pass_counts(
+        model,
+        evals,
+        k,
+        seed=eval_seed,
+        hidden=True,
+    )
+
+    return {
+        "positives": sum(h["positives"] for h in hist),
+        "train_pass1": pass_at_1(train_counts, k),
+        "eval_pass1": pass_at_1(eval_counts, k),
+        "hist": hist,
+    }
+
