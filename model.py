@@ -783,3 +783,34 @@ def group_batch(groups):
 
     return batch
 
+# Step 13 - positive_ratio_filter
+def positive_ratio_filter(rollouts, rng, ratio=0.75):
+    pos = []
+    neg = []
+    zero = []
+
+    for rollout in rollouts:
+        adv = rollout["adv"]
+
+        if adv > 0:
+            pos.append(rollout)
+        elif adv < 0:
+            neg.append(rollout)
+        else:
+            zero.append(rollout)
+
+    # Shuffle negatives before selecting the required prefix.
+    rng.shuffle(neg)
+
+    # Keep a fraction of negatives determined by the desired
+    # positive-to-negative ratio.
+    if pos:
+        n_neg = int(len(pos) * (1.0 - ratio) / ratio)
+    else:
+        n_neg = 0
+
+    kept_neg = neg[:n_neg]
+
+    # Required order: positives, retained negatives, then zeros.
+    return pos + kept_neg + zero
+

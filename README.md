@@ -22,6 +22,7 @@ python scaffold.py
 - [x] **10.** pretrain
 - [x] **11.** sequential_groups
 - [x] **12.** group_batch
+- [x] **13.** positive_ratio_filter
 
 ---
 
