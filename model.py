@@ -814,3 +814,113 @@ def positive_ratio_filter(rollouts, rng, ratio=0.75):
     # Required order: positives, retained negatives, then zeros.
     return pos + kept_neg + zero
 
+# Step 14 - rltldr_loss
+@torch.no_grad()
+def old_logprobs(model, rollouts):
+    rows = []
+
+    for rollout in rollouts:
+        tokens = rollout["ctx"] + rollout["acts"]
+
+        # The mask is irrelevant here; make_batch provides the
+        # shifted X and Y tensors.
+        mask = [0] * len(tokens)
+        rows.append((tokens, mask))
+
+    X, Y, _ = make_batch(rows)
+
+    logits = model(X)
+    log_probs = torch.log_softmax(logits, dim=-1)
+
+    # Log-probability of each target token.
+    return torch.gather(
+        log_probs,
+        dim=-1,
+        index=Y.unsqueeze(-1),
+    ).squeeze(-1)
+
+
+def rltldr_loss(model, rollouts, old_lp, lam, eps=0.2, use_grpo=True):
+    rows = []
+
+    for rollout in rollouts:
+        ctx = rollout["ctx"]
+        acts = rollout["acts"]
+        tokens = ctx + acts
+
+        # AM marks the predictions of sampled action tokens.
+        am = [0] * len(ctx) + [1] * len(acts)
+        rows.append((tokens, am))
+
+    X, Y, AM = make_batch(rows)
+
+    logits = model(X)
+    log_probs = torch.log_softmax(logits, dim=-1)
+
+    # Current log-probabilities of the target tokens.
+    lp = torch.gather(
+        log_probs,
+        dim=-1,
+        index=Y.unsqueeze(-1),
+    ).squeeze(-1)
+
+    # Importance-sampling ratio.
+    ratio = torch.exp(lp - old_lp)
+
+    # Broadcast each rollout's scalar advantage across its tokens.
+    A = torch.tensor(
+        [rollout["adv"] for rollout in rollouts],
+        dtype=lp.dtype,
+        device=lp.device,
+    ).unsqueeze(1)
+
+    unclipped = ratio * A
+    clipped = torch.clamp(
+        ratio,
+        1.0 - eps,
+        1.0 + eps,
+    ) * A
+
+    # Negative clipped surrogate.
+    surrogate = -torch.minimum(unclipped, clipped)
+
+    # GRPO is evaluated only on action-token predictions.
+    n_actions = AM.sum().clamp_min(1.0)
+    grpo = (surrogate * AM).sum() / n_actions
+
+    # Build the flipped SFT mask.  An INS at context position j
+    # means the model predicts the hint at shifted target position j.
+    SM = torch.zeros_like(AM)
+
+    for i, rollout in enumerate(rollouts):
+        ctx = rollout["ctx"]
+        sft_mask = sft_positions(ctx)
+
+        n = min(len(ctx) - 1, SM.shape[1])
+
+        if n > 0:
+            SM[i, :n] = torch.tensor(
+                sft_mask[:n],
+                dtype=SM.dtype,
+                device=SM.device,
+            )
+
+    n_sft = int(SM.sum().item())
+
+    # Negate after the masked mean so the zero-hint case remains -0.0,
+    # matching the required reference behavior.
+    n_sft_denom = SM.sum().clamp_min(1.0)
+    sft = -((lp * SM).sum() / n_sft_denom)
+
+    if use_grpo:
+        loss = grpo + lam * sft
+    else:
+        loss = lam * sft
+
+    return (
+        loss,
+        float(grpo.item()),
+        float(sft.item()),
+        n_sft,
+    )
+
