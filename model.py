@@ -397,3 +397,77 @@ class Policy(nn.Module):
 
         return self.out(self.norm(h))
 
+# Step 7 - sample_actions
+ACTION_MASK = torch.full((len(VOCAB),), float("-inf"))
+ACTION_MASK[ACTION_IDS] = 0.0
+
+
+def action_logits(model, ctx_batch):
+    # Pad all contexts to the same length.
+    batch_size = len(ctx_batch)
+    max_len = max(len(ctx) for ctx in ctx_batch)
+
+    x = torch.full(
+        (batch_size, max_len),
+        PAD,
+        dtype=torch.long,
+    )
+
+    lengths = []
+
+    for i, ctx in enumerate(ctx_batch):
+        x[i, :len(ctx)] = torch.tensor(ctx, dtype=torch.long)
+        lengths.append(len(ctx))
+
+    # Run the policy.
+    logits = model(x)
+
+    # Take the logits at each sequence's last real token.
+    last_logits = torch.stack([
+        logits[i, lengths[i] - 1]
+        for i in range(batch_size)
+    ])
+
+    # Only ACTION_IDS (including END) may be sampled.
+    return last_logits + ACTION_MASK.to(last_logits.device)
+
+
+@torch.no_grad()
+def sample_actions(model, contexts, max_steps, generator):
+    # Work on copies so the caller's contexts are not modified.
+    sequences = [list(ctx) for ctx in contexts]
+    sampled = [[] for _ in contexts]
+    finished = [False] * len(contexts)
+
+    for _ in range(max_steps):
+        active_indices = [
+            i for i in range(len(sequences))
+            if not finished[i]
+        ]
+
+        if not active_indices:
+            break
+
+        active_contexts = [sequences[i] for i in active_indices]
+        logits = action_logits(model, active_contexts)
+
+        probs = torch.softmax(logits, dim=-1)
+        next_tokens = torch.multinomial(
+            probs,
+            num_samples=1,
+            generator=generator,
+        ).squeeze(1)
+
+        for row, idx in enumerate(active_indices):
+            token = int(next_tokens[row].item())
+
+            sequences[idx].append(token)
+            sampled[idx].append(token)
+
+            # Stop after END or when the sequence reaches
+            # model.max_len - 1.
+            if token == END or len(sequences[idx]) >= model.max_len - 1:
+                finished[idx] = True
+
+    return sampled
+
