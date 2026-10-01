@@ -579,3 +579,76 @@ def make_batch(rows):
 
     return X, Y, M
 
+# Step 10 - pretrain
+import math
+import torch.nn.functional as F
+
+def pretrain(model, rng, steps, batch=64, lr=3e-3):
+    if steps <= 0:
+        return 0.0
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=lr,
+        weight_decay=0.01,
+    )
+
+    final_loss = 0.0
+
+    for s in range(steps):
+        # Set the cosine-scheduled learning rate for this step.
+        step_lr = lr * 0.5 * (1.0 + math.cos(math.pi * s / steps))
+
+        for group in optimizer.param_groups:
+            group["lr"] = step_lr
+
+        rows = []
+
+        for _ in range(batch):
+            target = rng.choice(list(RECIPES))
+            task = random_task(target, rng)
+
+            # Draw the number of insights with the requested weighting.
+            n = rng.choice([0, 0, 1, 1, 2, 3])
+            insights = [rng.choice(ACTIONS) for _ in range(n)]
+
+            ctx = encode_context(target, task[1], insights)
+            actions = demo(task, insights)
+
+            action_tokens = [TOK[action] for action in actions]
+            tokens = ctx + action_tokens
+
+            mask = hint_token_mask(ctx) + [1] * len(actions)
+
+            rows.append((tokens, mask))
+
+        X, Y, M = make_batch(rows)
+
+        logits = model(X)
+
+        # Compute token-level cross-entropy, then apply the training mask.
+        loss_per_token = F.cross_entropy(
+            logits.reshape(-1, logits.size(-1)),
+            Y.reshape(-1),
+            reduction="none",
+        ).reshape_as(M)
+
+        mask_total = M.sum()
+
+        if mask_total.item() > 0:
+            loss = (loss_per_token * M).sum() / mask_total
+        else:
+            loss = loss_per_token.sum() * 0.0
+
+        optimizer.zero_grad()
+        loss.backward()
+
+        # Prevent excessively large parameter updates.
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+        optimizer.step()
+
+        final_loss = float(loss.item())
+
+    return final_loss
+

@@ -19,6 +19,7 @@ python scaffold.py
 - [x] **7.** sample_actions
 - [x] **8.** pass_counts
 - [x] **9.** demo
+- [x] **10.** pretrain
 
 ---
 
