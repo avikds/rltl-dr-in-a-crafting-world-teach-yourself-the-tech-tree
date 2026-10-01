@@ -231,17 +231,17 @@ def split_tasks(hard, held_targets, rng):
 
 # Step 4 - insight_for
 def insight_for(target, have, actions):
-    # Execute the complete attempt in the live world.
+    # Simulate the full attempt in the live world.
     final_inv, log = simulate(have, actions, hidden=True)
 
-    # No insight is needed when the target was successfully obtained.
+    # No insight is required if the target was obtained.
     if final_inv[target] > 0:
         return None
 
     item = target
     last_act = None
 
-    # Follow the dependency chain for at most twelve levels.
+    # Follow the target's dependency chain for at most 12 levels.
     for _ in range(12):
         if item in RECIPES:
             act = f"craft_{item}"
@@ -251,18 +251,19 @@ def insight_for(target, have, actions):
         last_act = act
         attempts = log.get(act, [])
 
-        # The action was never attempted, so it is the next thing
-        # the agent should obtain.
+        # The action was never attempted.
         if not attempts:
             return act
 
-        # If every recorded attempt succeeded, the item was produced
-        # but may have been consumed later in the full attempt.
+        # If every attempt succeeded, the item was obtained but may
+        # subsequently have been consumed.
         if all(ok for ok, _ in attempts):
             return act
 
-        # Follow the missing prerequisite from the last failed attempt.
-        _, missing = attempts[-1]
+        # Follow the missing item from the LAST FAILED attempt,
+        # not merely the last attempt.
+        failed = [(ok, missing) for ok, missing in attempts if not ok]
+        _, missing = failed[-1]
         item = missing
 
     return last_act
@@ -923,4 +924,115 @@ def rltldr_loss(model, rollouts, old_lp, lam, eps=0.2, use_grpo=True):
         float(sft.item()),
         n_sft,
     )
+
+# Step 15 - train_rl
+def train_rl(
+    model,
+    tasks,
+    steps,
+    cfg,
+    seed,
+    use_insights,
+    lam,
+    use_grpo=True,
+    collect_pairs=None,
+):
+    rng = random.Random(seed)
+    g = torch.Generator().manual_seed(seed)
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=cfg["lr"],
+        weight_decay=0.0,
+    )
+
+    history = []
+
+    for step in range(steps):
+        # Sample the task subset for this training step.
+        n_tasks = min(cfg["tasks_per_step"], len(tasks))
+
+        if n_tasks > 0:
+            step_tasks = rng.sample(tasks, n_tasks)
+        else:
+            step_tasks = []
+
+        groups, insights = sequential_groups(
+            model,
+            step_tasks,
+            cfg["K"],
+            g,
+            use_insights,
+        )
+
+        # Optionally collect the insight-conditioned examples.
+        if collect_pairs is not None:
+            for task_idx, group in enumerate(groups):
+                for rollout in group:
+                    if rollout["conditioned"]:
+                        collect_pairs.append(
+                            (
+                                step_tasks[task_idx],
+                                list(rollout["insights"]),
+                            )
+                        )
+
+        # Count all positive rollouts before filtering.
+        positives = sum(
+            1
+            for group in groups
+            for rollout in group
+            if rollout["reward"] > 0.0
+        )
+
+        # Compute group-relative advantages and filter the resulting batch.
+        batch = group_batch(groups)
+        batch = positive_ratio_filter(batch, rng)
+
+        record = {
+            "step": step,
+            "positives": positives,
+            "batch": len(batch),
+        }
+
+        if batch:
+            # Freeze the old policy probabilities for the PPO objective.
+            old_lp = old_logprobs(model, batch)
+
+            last_grpo = 0.0
+            last_sft = 0.0
+            last_sft_tokens = 0
+
+            # Perform the requested number of PPO epochs.
+            for _ in range(cfg["ppo_epochs"]):
+                optimizer.zero_grad()
+
+                loss, grpo, sft, sft_tokens = rltldr_loss(
+                    model,
+                    batch,
+                    old_lp,
+                    lam,
+                    use_grpo=use_grpo,
+                )
+
+                loss.backward()
+
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    1.0,
+                )
+
+                optimizer.step()
+
+                last_grpo = grpo
+                last_sft = sft
+                last_sft_tokens = sft_tokens
+
+            record["grpo"] = last_grpo
+            record["sft"] = last_sft
+            record["sft_tokens"] = last_sft_tokens
+
+        history.append(record)
+
+    return history
 

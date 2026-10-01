@@ -24,6 +24,7 @@ python scaffold.py
 - [x] **12.** group_batch
 - [x] **13.** positive_ratio_filter
 - [x] **14.** rltldr_loss
+- [x] **15.** train_rl
 
 ---
 
