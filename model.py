@@ -949,13 +949,9 @@ def train_rl(
     history = []
 
     for step in range(steps):
-        # Sample the task subset for this training step.
+        # Sample at most tasks_per_step distinct tasks.
         n_tasks = min(cfg["tasks_per_step"], len(tasks))
-
-        if n_tasks > 0:
-            step_tasks = rng.sample(tasks, n_tasks)
-        else:
-            step_tasks = []
+        step_tasks = rng.sample(tasks, n_tasks) if n_tasks else []
 
         groups, insights = sequential_groups(
             model,
@@ -965,7 +961,7 @@ def train_rl(
             use_insights,
         )
 
-        # Optionally collect the insight-conditioned examples.
+        # Collect the insight lists actually used by conditioned rollouts.
         if collect_pairs is not None:
             for task_idx, group in enumerate(groups):
                 for rollout in group:
@@ -977,7 +973,7 @@ def train_rl(
                             )
                         )
 
-        # Count all positive rollouts before filtering.
+        # Count positive rollouts before any filtering.
         positives = sum(
             1
             for group in groups
@@ -985,7 +981,7 @@ def train_rl(
             if rollout["reward"] > 0.0
         )
 
-        # Compute group-relative advantages and filter the resulting batch.
+        # Form the group-relative batch and apply the positive-ratio filter.
         batch = group_batch(groups)
         batch = positive_ratio_filter(batch, rng)
 
@@ -996,14 +992,14 @@ def train_rl(
         }
 
         if batch:
-            # Freeze the old policy probabilities for the PPO objective.
+            # Compute old-policy log-probabilities once and reuse them
+            # across all PPO epochs.
             old_lp = old_logprobs(model, batch)
 
             last_grpo = 0.0
             last_sft = 0.0
             last_sft_tokens = 0
 
-            # Perform the requested number of PPO epochs.
             for _ in range(cfg["ppo_epochs"]):
                 optimizer.zero_grad()
 
@@ -1011,7 +1007,7 @@ def train_rl(
                     model,
                     batch,
                     old_lp,
-                    lam,
+                    lam=lam,
                     use_grpo=use_grpo,
                 )
 
