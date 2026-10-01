@@ -27,6 +27,7 @@ python scaffold.py
 - [x] **15.** train_rl
 - [x] **16.** insight_metrics
 - [x] **17.** sftldr
+- [x] **18.** build_base
 
 ---
 

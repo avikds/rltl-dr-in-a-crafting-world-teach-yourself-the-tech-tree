@@ -1299,3 +1299,48 @@ def sftldr(model, pairs, steps, lr, seed, batch=32):
 
     return final_loss
 
+# Step 18 - build_base
+def build_base(
+    seed,
+    pretrain_steps=600,
+    per_target=10,
+    held_targets=("compass", "jukebox", "clock", "anvil"),
+):
+    torch.manual_seed(seed)
+    rng = random.Random(seed)
+
+    model = Policy(len(VOCAB))
+
+    # Pretrain the base policy using the seeded RNG.
+    pretrain(
+        model,
+        rng,
+        pretrain_steps,
+    )
+
+    # Generate random tasks in RECIPES insertion order.
+    tasks = []
+    seen = set()
+
+    for target in RECIPES:
+        for _ in range(per_target):
+            task = random_task(target, rng)
+
+            # Keep only the first occurrence of each distinct task.
+            if task not in seen:
+                seen.add(task)
+                tasks.append(task)
+
+    # Retain tasks for which the public expert fails in the live world.
+    hard = hard_by_construction(tasks)
+
+    # Held-out targets become evaluation tasks; the rest are shuffled
+    # into the training set.
+    train, evals = split_tasks(
+        hard,
+        set(held_targets),
+        rng,
+    )
+
+    return model, train, evals
+
