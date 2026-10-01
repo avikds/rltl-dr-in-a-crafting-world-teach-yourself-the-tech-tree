@@ -15,6 +15,7 @@ python scaffold.py
 - [x] **3.** hard_by_construction
 - [x] **4.** insight_for
 - [x] **5.** encode_context
+- [x] **6.** Policy
 
 ---
 
