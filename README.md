@@ -26,6 +26,7 @@ python scaffold.py
 - [x] **14.** rltldr_loss
 - [x] **15.** train_rl
 - [x] **16.** insight_metrics
+- [x] **17.** sftldr
 
 ---
 

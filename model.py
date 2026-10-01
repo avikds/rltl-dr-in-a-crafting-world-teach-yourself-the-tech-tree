@@ -1239,3 +1239,63 @@ def insight_reliance(model, rollouts):
 
     return sum(gaps) / len(gaps) if gaps else 0.0
 
+# Step 17 - sftldr
+def sftldr(model, pairs, steps, lr, seed, batch=32):
+    rng = random.Random(seed)
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=lr,
+    )
+
+    final_loss = 0.0
+
+    if steps <= 0 or not pairs:
+        return final_loss
+
+    for _ in range(steps):
+        rows = []
+
+        # Sample pairs independently with replacement.
+        for _ in range(batch):
+            task, insights = rng.choice(pairs)
+            target, have = task
+
+            ctx = encode_context(
+                target,
+                have,
+                insights,
+            )
+
+            rows.append(
+                (
+                    ctx,
+                    hint_token_mask(ctx),
+                )
+            )
+
+        X, Y, M = make_batch(rows)
+
+        logits = model(X)
+        log_probs = torch.log_softmax(logits, dim=-1)
+
+        # Log-probability of each target token.
+        lp = torch.gather(
+            log_probs,
+            dim=-1,
+            index=Y.unsqueeze(-1),
+        ).squeeze(-1)
+
+        # Minimize the masked mean negative log-probability
+        # over hint-token targets only.
+        mask_total = M.sum().clamp_min(1.0)
+        loss = (-lp * M).sum() / mask_total
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        final_loss = float(loss.item())
+
+    return final_loss
+
