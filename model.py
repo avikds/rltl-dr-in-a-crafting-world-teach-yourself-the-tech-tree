@@ -108,3 +108,84 @@ def succeeded(target, have, actions, hidden=True):
     final_inventory, _ = simulate(have, actions, hidden=hidden)
     return final_inventory[target] > 0
 
+# Step 2 - plan
+def plan(item, inv):
+    # Nothing to do if the inventory already contains the item.
+    if inv[item] > 0:
+        return []
+
+    actions = []
+
+    # Raw resource: make the required public tool first, if necessary,
+    # then gather the resource.
+    if item in RAW:
+        tool = RAW[item]
+
+        if tool is not None and inv[tool] <= 0:
+            actions.extend(plan(tool, inv))
+
+        actions.append(f"gather_{item}")
+        inv[item] += 1
+
+        return actions
+
+    # Craftable item: make the required tool first, if necessary.
+    ingredients, tool = RECIPES[item]
+
+    if tool is not None and inv[tool] <= 0:
+        actions.extend(plan(tool, inv))
+
+    # Resolve ingredients in recipe order.  After planning an ingredient,
+    # consume exactly one unit because the eventual craft uses it.
+    for ingredient in ingredients:
+        if inv[ingredient] <= 0:
+            actions.extend(plan(ingredient, inv))
+
+        inv[ingredient] -= 1
+
+    actions.append(f"craft_{item}")
+    inv[item] += 1
+
+    return actions
+
+
+def plan_len(item, have=()):
+    # Start from a fresh inventory initialized from `have`.
+    inv = Counter(have)
+    return len(plan(item, inv))
+
+
+def sub_items(target):
+    # Collect every recursive dependency: ingredients, tools, and
+    # dependencies of those ingredients/tools.
+    found = set()
+
+    def visit(item):
+        if item in found:
+            return
+
+        found.add(item)
+
+        # Raw resource: its public tool is a dependency.
+        if item in RAW:
+            tool = RAW[item]
+            if tool is not None:
+                visit(tool)
+            return
+
+        # Craftable item: both its tool and ingredients are dependencies.
+        ingredients, tool = RECIPES[item]
+
+        if tool is not None:
+            visit(tool)
+
+        for ingredient in ingredients:
+            visit(ingredient)
+
+    visit(target)
+
+    # The target itself is excluded from the dependency set.
+    found.discard(target)
+
+    return sorted(found)
+

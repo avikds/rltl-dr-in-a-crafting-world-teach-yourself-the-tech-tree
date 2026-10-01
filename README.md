@@ -11,6 +11,7 @@ python scaffold.py
 ## Steps
 
 - [x] **1.** step_world
+- [x] **2.** plan
 
 ---
 
