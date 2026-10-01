@@ -229,3 +229,54 @@ def split_tasks(hard, held_targets, rng):
 
     return train, eval_tasks
 
+# Step 4 - insight_for
+def insight_for(target, have, actions):
+    # Execute the complete attempt in the live world.
+    final_inv, log = simulate(have, actions, hidden=True)
+
+    # No insight is needed when the target was successfully obtained.
+    if final_inv[target] > 0:
+        return None
+
+    item = target
+    last_act = None
+
+    # Follow the dependency chain for at most twelve levels.
+    for _ in range(12):
+        if item in RECIPES:
+            act = f"craft_{item}"
+        else:
+            act = f"gather_{item}"
+
+        last_act = act
+        attempts = log.get(act, [])
+
+        # The action was never attempted, so it is the next thing
+        # the agent should obtain.
+        if not attempts:
+            return act
+
+        # If every recorded attempt succeeded, the item was produced
+        # but may have been consumed later in the full attempt.
+        if all(ok for ok, _ in attempts):
+            return act
+
+        # Follow the missing prerequisite from the last failed attempt.
+        _, missing = attempts[-1]
+        item = missing
+
+    return last_act
+
+
+def insight_text(action):
+    action_type, item = action.split("_", 1)
+    item = item.replace("_", " ")
+
+    if action_type == "craft":
+        return f"Obtain {item} first by crafting it."
+
+    if action_type == "gather":
+        return f"Obtain {item} first by gathering it."
+
+    raise ValueError(f"Unknown action: {action}")
+
