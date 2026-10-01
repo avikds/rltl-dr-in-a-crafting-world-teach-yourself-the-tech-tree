@@ -32,6 +32,44 @@ python scaffold.py
 - [x] **20.** probe_rules
 - [x] **21.** rltldr_experiment
 
----
+## Results
 
-Built on Deep-ML.
+```
+1. The base policy
+   public-world Pass@1 0.84 | hard tasks by construction: 41 training, 26 on held-out targets
+   base Pass@1 at 16 attempts on the hard tasks, live world: 0.000
+
+2. The learning barrier (GRPO, no insights)
+   positives over 25 steps: 0 | no-insight Pass@1 train 0.000, held-out 0.000
+   Every group has the same reward, so the advantage is zero and the weights never move.
+
+3. Sequential attempts with insights (base policy)
+   solved 28/41 training tasks within 6 attempts; mean first success at attempt 3.0
+   insight advantage 0.32 | too-hard 0.32 | too-easy 0.12 | share of successes that were conditioned 1.00
+   rail from ['clay', 'wooden_pickaxe']: insights ['craft_rail', 'craft_torch']
+   minecart from ['furnace', 'iron_ingot', 'planks']: insights ['craft_wooden_pickaxe', 'craft_torch', 'craft_rail', 'craft_torch']
+   iron_pickaxe from ['furnace', 'wood']: insights ['craft_torch', 'craft_stone_pickaxe', 'gather_stone', 'craft_torch', 'craft_iron_pickaxe', 'craft_torch']
+
+4. RLTL;DR (lambda = 0.03)
+   positives 566 | no-insight Pass@1 train 0.732, held-out targets 0.538
+   after training: solved 0.95 of training groups | too-hard 0.11 | insight reliance 0.147 nats per token
+   The policy now solves tasks it could never solve, with nothing in context, including targets it never trained on.
+
+5. Where the gain comes from
+   lambda 0.0  : positives  514 | no-insight Pass@1 train 0.640, held-out 0.510
+   lambda 0.03 : positives  566 | no-insight Pass@1 train 0.732, held-out 0.538
+   lambda 0.5  : positives  397 | no-insight Pass@1 train 0.000, held-out 0.010
+   SFTL;DR on 705 task-insight pairs, no rollouts: train 0.000, held-out 0.000
+   At this scale the transfer rides on the policy gradient of insight-conditioned successes; the insight-SFT term
+   changes little when small and is harmful when large, and SFTL;DR alone does not move the unaided policy.
+   The paper's policy is a pretrained LLM whose weights already link a sentence about a rule to the behavior that
+   follows it, which is what lets a loss on the sentence change the behavior; a from-scratch policy lacks that link.
+
+6. Probe: the hidden rules in the trained policy, held-out targets, no insight in context
+   anvil    : success 1.00 | hidden tools crafted before they are needed 1.00 | insight head says: craft_torch
+   clock    : success 0.88 | hidden tools crafted before they are needed 1.00 | insight head says: craft_torch
+   compass  : success 0.75 | hidden tools crafted before they are needed 1.00 | insight head says: craft_torch
+   jukebox  : success 0.00 | hidden tools crafted before they are needed 0.00 | insight head says: craft_torch
+   The behavior transfers to targets never trained on, and the insight head names the rule most insights were about;
+   a target that needs both hidden tools and thirty actions from an empty inventory is still out of reach.
+```
