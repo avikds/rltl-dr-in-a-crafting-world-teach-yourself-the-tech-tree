@@ -20,6 +20,7 @@ python scaffold.py
 - [x] **8.** pass_counts
 - [x] **9.** demo
 - [x] **10.** pretrain
+- [x] **11.** sequential_groups
 
 ---
 

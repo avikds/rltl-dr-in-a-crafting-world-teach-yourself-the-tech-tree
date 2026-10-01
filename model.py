@@ -652,3 +652,105 @@ def pretrain(model, rng, steps, batch=64, lr=3e-3):
 
     return final_loss
 
+# Step 11 - sequential_groups
+def sequential_groups(
+    model,
+    tasks,
+    K,
+    generator,
+    use_insights,
+    max_steps=32,
+    max_ins=6,
+):
+    # Chronological insight history for each task.
+    insights = [[] for _ in tasks]
+
+    # One group of rollout records per task.
+    groups = [[] for _ in tasks]
+
+    # Run K sequential attempts. Later attempts can depend on
+    # successes and insights accumulated during earlier attempts.
+    for k in range(K):
+        contexts = []
+        conditioned_flags = []
+        context_insights = []
+
+        for i, (target, have) in enumerate(tasks):
+            ins = insights[i]
+            succ = sum(
+                1.0
+                for rollout in groups[i]
+                if rollout["reward"] > 0.0
+            )
+
+            # Insight conditioning is gated by the running success count.
+            cond = (
+                use_insights
+                and len(ins) > 0
+                and succ <= 0.5 * k
+            )
+
+            if cond:
+                # Newest insight first, limited to max_ins entries.
+                placed_ins = list(reversed(ins[-max_ins:]))
+            else:
+                placed_ins = []
+
+            ctx = encode_context(target, have, placed_ins)
+
+            contexts.append(ctx)
+            conditioned_flags.append(cond)
+            context_insights.append(placed_ins)
+
+        # Sample one rollout for every task in this attempt.
+        sampled = sample_actions(
+            model,
+            contexts,
+            max_steps,
+            generator,
+        )
+
+        for i, (target, have) in enumerate(tasks):
+            acts = sampled[i]
+            action_names = [VOCAB[token_id] for token_id in acts]
+
+            reward = (
+                1.0
+                if succeeded(
+                    target,
+                    have,
+                    action_names,
+                    hidden=True,
+                )
+                else 0.0
+            )
+
+            record = {
+                "ctx": contexts[i],
+                "acts": acts,
+                "reward": reward,
+                "conditioned": conditioned_flags[i],
+                "insights": context_insights[i],
+            }
+
+            groups[i].append(record)
+
+            # On failure, let the verifier derive the next insight.
+            if reward == 0.0 and use_insights:
+                new_insight = insight_for(
+                    target,
+                    have,
+                    action_names,
+                )
+
+                if (
+                    new_insight is not None
+                    and (
+                        not insights[i]
+                        or new_insight != insights[i][-1]
+                    )
+                ):
+                    insights[i].append(new_insight)
+
+    return groups, insights
+
