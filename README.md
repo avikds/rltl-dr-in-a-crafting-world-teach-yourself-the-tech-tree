@@ -14,6 +14,7 @@ python scaffold.py
 - [x] **2.** plan
 - [x] **3.** hard_by_construction
 - [x] **4.** insight_for
+- [x] **5.** encode_context
 
 ---
 

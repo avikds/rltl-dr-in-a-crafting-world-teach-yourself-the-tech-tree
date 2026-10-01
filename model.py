@@ -280,3 +280,67 @@ def insight_text(action):
 
     raise ValueError(f"Unknown action: {action}")
 
+# Step 5 - encode_context
+ITEMS = list(RAW) + list(RECIPES)
+
+ACTIONS = (
+    [f"gather_{r}" for r in RAW]
+    + [f"craft_{c}" for c in RECIPES]
+)
+
+HINTS = [f"hint_{a}" for a in ACTIONS]
+
+SPECIAL = ["PAD", "BOS", "TASK", "HAVE", "INS", "SEP", "END"]
+
+VOCAB = SPECIAL + ITEMS + ACTIONS + HINTS
+
+TOK = {name: idx for idx, name in enumerate(VOCAB)}
+
+PAD, BOS, TASK, HAVE, INS, SEP, END = range(7)
+
+ACTION_IDS = [TOK[action] for action in ACTIONS] + [END]
+
+
+def encode_context(target, have, insights):
+    ctx = [
+        BOS,
+        TASK,
+        TOK[target],
+        HAVE,
+    ]
+
+    # Include at most six starting items, in sorted order.
+    for item in sorted(have)[:6]:
+        ctx.append(TOK[item])
+
+    # Encode each insight as INS followed by its dedicated hint token.
+    for action in insights:
+        ctx.extend([
+            INS,
+            TOK[f"hint_{action}"],
+        ])
+
+    ctx.append(SEP)
+
+    return ctx
+
+
+def sft_positions(ctx):
+    # INS is the position whose next token is the corresponding hint.
+    return [1 if tok == INS else 0 for tok in ctx]
+
+
+def hint_token_mask(ctx):
+    mask = [0] * len(ctx)
+
+    # Every token immediately following INS is a hint token.
+    for i in range(1, len(ctx)):
+        if ctx[i - 1] == INS:
+            mask[i] = 1
+
+    return mask
+
+
+def names(toks):
+    return [VOCAB[tok] for tok in toks]
+
