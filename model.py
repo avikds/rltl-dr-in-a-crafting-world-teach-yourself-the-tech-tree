@@ -1400,3 +1400,114 @@ def run_variant(
         "hist": hist,
     }
 
+# Step 20 - probe_rules
+def tool_before(acts, action):
+    # The hidden rule for `action` specifies the tool that must be
+    # crafted before the hidden-gather action can succeed.
+    if action not in acts:
+        return False
+
+    hidden_tool = HIDDEN.get(action)
+
+    if hidden_tool is None:
+        return False
+
+    required_craft = f"craft_{hidden_tool}"
+
+    action_pos = acts.index(action)
+
+    # The required craft action must occur before the first occurrence
+    # of the hidden action.
+    return required_craft in acts[:action_pos]
+
+
+def hidden_actions(target):
+    subs = set(sub_items(target))
+
+    # Preserve the insertion order of HIDDEN.
+    return [
+        action
+        for action in HIDDEN
+        if action[len("gather_"):] in subs
+    ]
+
+
+@torch.no_grad()
+def probe_rules(model, targets, seed, k=8, max_steps=32):
+    generator = torch.Generator().manual_seed(seed)
+    results = {}
+
+    # Hint-token IDs, paired with their underlying action names.
+    hint_pairs = [
+        (TOK[f"hint_{action}"], action)
+        for action in ACTIONS
+    ]
+
+    for target in targets:
+        # Sample k no-insight rollouts from an empty inventory.
+        ctx = encode_context(target, (), [])
+        contexts = [ctx] * k
+
+        sampled = sample_actions(
+            model,
+            contexts,
+            max_steps,
+            generator,
+        )
+
+        hidden = hidden_actions(target)
+
+        successes = 0
+        rule_first_count = 0
+
+        for token_ids in sampled:
+            acts = [VOCAB[token_id] for token_id in token_ids]
+
+            if succeeded(
+                target,
+                (),
+                acts,
+                hidden=True,
+            ):
+                successes += 1
+
+            if all(
+                tool_before(acts, action)
+                for action in hidden
+            ):
+                rule_first_count += 1
+
+        # Probe the model at an explicit insight slot.
+        probe_ctx = [
+            BOS,
+            TASK,
+            TOK[target],
+            HAVE,
+            INS,
+        ]
+
+        x = torch.tensor(
+            [probe_ctx],
+            dtype=torch.long,
+        )
+
+        logits = model(x)[0, -1]
+
+        hint_ids = [hint_id for hint_id, _ in hint_pairs]
+        hint_logits = logits[hint_ids]
+
+        top_idx = int(torch.argmax(hint_logits).item())
+        top_hint = hint_pairs[top_idx][1]
+
+        results[target] = {
+            "success": successes / k if k else 0.0,
+            "rule_first": (
+                rule_first_count / k
+                if k
+                else 0.0
+            ),
+            "top_hint": top_hint,
+        }
+
+    return results
+
