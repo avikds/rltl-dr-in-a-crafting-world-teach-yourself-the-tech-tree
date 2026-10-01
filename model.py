@@ -189,3 +189,43 @@ def sub_items(target):
 
     return sorted(found)
 
+# Step 3 - hard_by_construction
+import random
+
+def random_task(target, rng, max_have=3):
+    subs = sub_items(target)
+
+    k = rng.randint(0, min(max_have, len(subs)))
+    have = tuple(sorted(rng.sample(subs, k)))
+
+    return target, have
+
+
+def hard_by_construction(tasks):
+    hard = []
+
+    for target, have in tasks:
+        # Build the public expert plan from the given starting inventory.
+        inv = Counter(have)
+        actions = plan(target, inv)
+
+        # The task is hard when that public-only plan fails in the
+        # live world because of a hidden rule.
+        if not succeeded(target, have, actions, hidden=True):
+            hard.append((target, have))
+
+    return hard
+
+
+def split_tasks(hard, held_targets, rng):
+    held_targets = set(held_targets)
+
+    # Preserve the original order while partitioning the tasks.
+    train = [task for task in hard if task[0] not in held_targets]
+    eval_tasks = [task for task in hard if task[0] in held_targets]
+
+    # Shuffle only the training portion.
+    rng.shuffle(train)
+
+    return train, eval_tasks
+
