@@ -17,6 +17,7 @@ python scaffold.py
 - [x] **5.** encode_context
 - [x] **6.** Policy
 - [x] **7.** sample_actions
+- [x] **8.** pass_counts
 
 ---
 

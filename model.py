@@ -471,3 +471,54 @@ def sample_actions(model, contexts, max_steps, generator):
 
     return sampled
 
+# Step 8 - pass_counts
+@torch.no_grad()
+def pass_counts(model, tasks, k, seed, max_steps=32, hidden=True):
+    generator = torch.Generator().manual_seed(seed)
+
+    contexts = []
+    task_indices = []
+
+    # Create k identical no-insight contexts for each task.
+    for i, (target, have) in enumerate(tasks):
+        ctx = encode_context(target, have, [])
+        for _ in range(k):
+            contexts.append(ctx)
+            task_indices.append(i)
+
+    # Sample all rollouts in one call.
+    sampled = sample_actions(
+        model,
+        contexts,
+        max_steps,
+        generator,
+    )
+
+    counts = [0] * len(tasks)
+
+    # Convert sampled token IDs back into action strings before
+    # passing them to the crafting-world simulator.
+    for token_ids, task_idx in zip(sampled, task_indices):
+        actions = [VOCAB[token_id] for token_id in token_ids]
+
+        target, have = tasks[task_idx]
+
+        if succeeded(target, have, actions, hidden=hidden):
+            counts[task_idx] += 1
+
+    return counts
+
+
+def pass_at_1(counts, k):
+    if not counts:
+        return 0.0
+
+    return sum(count / k for count in counts) / len(counts)
+
+
+def pass_at_k(counts):
+    if not counts:
+        return 0.0
+
+    return sum(count > 0 for count in counts) / len(counts)
+
